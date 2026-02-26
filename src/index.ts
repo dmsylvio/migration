@@ -9,7 +9,7 @@ type Job = {
   sourceTable: string;
   pk: string;
   extractSql: (mode: "full" | "incremental") => string;
-  upsert: (row: any, ctx: Ctx) => Promise<void>;
+  upsert: (row: any, ctx: Ctx) => Promise<boolean>;
 };
 
 type Ctx = {
@@ -33,7 +33,7 @@ const mode = (args.find((a) => a.startsWith("--mode="))?.split("=")[1] ??
   "full") as "full" | "incremental";
 const tableFilter = args.includes("--table")
   ? args[args.indexOf("--table") + 1]
-  : process.env.MIGRATION_TABLE ?? undefined;
+  : (process.env.MIGRATION_TABLE ?? undefined);
 const batchSize = Number(process.env.BATCH_SIZE || 1000);
 
 const source = mysql.createPool(sourceUrl);
@@ -61,7 +61,10 @@ function normalizePhone(phone?: string | null) {
   return String(phone).replace(/\s+/g, "").trim();
 }
 
-function normalizePhoneOrDefault(phone?: string | null, fallback = "0000000000") {
+function normalizePhoneOrDefault(
+  phone?: string | null,
+  fallback = "0000000000",
+) {
   const normalized = normalizePhone(phone);
   if (!normalized) return fallback;
   return normalized;
@@ -247,7 +250,10 @@ async function mapGet(
   return r.rows[0]?.new_id ?? null;
 }
 
-async function resolveId(entity: string, legacyId: string | number | null | undefined) {
+async function resolveId(
+  entity: string,
+  legacyId: string | number | null | undefined,
+) {
   const existing = await mapGet(entity, legacyId);
   return existing ?? newId();
 }
@@ -259,7 +265,7 @@ async function bootstrapStates() {
   return m;
 }
 
-const dimUpsert = (table: string) => async (row: any) => {
+const dimUpsert = (table: string) => async (row: any, _ctx?: Ctx) => {
   const id = await resolveId(table, row.id);
   await target.query(
     `insert into ${table}(id,name,created_at,updated_at)
@@ -268,6 +274,7 @@ const dimUpsert = (table: string) => async (row: any) => {
     [id, row.name, row.created_at ?? null, row.updated_at ?? null],
   );
   await mapPut(table, row.id, id);
+  return true;
 };
 
 const jobs: Job[] = [
@@ -287,6 +294,7 @@ const jobs: Job[] = [
         [id, row.name, row.acronym],
       );
       await mapPut("state", row.id, id);
+      return true;
     },
   },
   {
@@ -361,7 +369,9 @@ const jobs: Job[] = [
     extractSql: () => `select * from tb_usuario`,
     upsert: async (row) => {
       const id = await resolveId("user", row.co_seq_usuario);
-      const baseEmail = sanitizeRequiredString(row.email ?? `${id}@legacy.local`).toLowerCase();
+      const baseEmail = sanitizeRequiredString(
+        row.email ?? `${id}@legacy.local`,
+      ).toLowerCase();
       await target.query(
         `insert into "user"(id,name,email,password,"emailVerified",image,role,created_at,updated_at)
       values ($1,$2,$3,$4,null,$5,$6,coalesce($7,now()),coalesce($8,now()))
@@ -378,6 +388,7 @@ const jobs: Job[] = [
         ],
       );
       await mapPut("user", row.co_seq_usuario, id);
+      return true;
     },
   },
 
@@ -392,7 +403,7 @@ const jobs: Job[] = [
       const userId = await mapGet("user", row.user_id);
       const stateId =
         ctx.stateByUf.get(String(row.ds_uf || "").toUpperCase()) ?? null;
-      if (!userId || !stateId) return;
+      if (!userId || !stateId) return false;
       await target.query(
         `insert into company(id,user_id,notes,legal_name,trade_name,activities,cnpj_number,state_registration,address,city,state_id,zip_code,phone,whatsapp,created_at,updated_at)
       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,coalesce($15,now()),coalesce($16,now()))
@@ -417,6 +428,7 @@ const jobs: Job[] = [
         ],
       );
       await mapPut("company", row.id ?? row.co_seq_empresa, id);
+      return true;
     },
   },
 
@@ -427,11 +439,14 @@ const jobs: Job[] = [
     pk: "co_seq_instituicao",
     extractSql: () => `select * from tb_instituicao`,
     upsert: async (row, ctx) => {
-      const id = await resolveId("institutions", row.id ?? row.co_seq_instituicao);
+      const id = await resolveId(
+        "institutions",
+        row.id ?? row.co_seq_instituicao,
+      );
       const userId = await mapGet("user", row.user_id);
       const stateId =
         ctx.stateByUf.get(String(row.ds_uf || "").toUpperCase()) ?? null;
-      if (!userId || !stateId) return;
+      if (!userId || !stateId) return false;
       await target.query(
         `insert into institutions(id,user_id,notes,legal_name,trade_name,activities,cnpj_number,state_registration,address,city,state_id,zip_code,phone,whatsapp,created_at,updated_at)
       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,coalesce($15,now()),coalesce($16,now()))
@@ -456,6 +471,7 @@ const jobs: Job[] = [
         ],
       );
       await mapPut("institutions", row.id ?? row.co_seq_instituicao, id);
+      return true;
     },
   },
 
@@ -468,7 +484,7 @@ const jobs: Job[] = [
     upsert: async (row) => {
       const id = await resolveId("student", row.id);
       const userId = await mapGet("user", row.usuario_id);
-      if (!userId) return;
+      if (!userId) return false;
       let genderId = await getGenderIdFromLegacy(row.genero);
       if (!genderId) {
         genderId = await getDefaultGenderId();
@@ -531,6 +547,7 @@ const jobs: Job[] = [
         ],
       );
       await mapPut("student", row.id, id);
+      return true;
     },
   },
 
@@ -543,7 +560,7 @@ const jobs: Job[] = [
     upsert: async (row) => {
       const id = await resolveId("company_supervisor", row.id);
       const companyId = await mapGet("company", row.empresa_id);
-      if (!companyId) return;
+      if (!companyId) return false;
       await target.query(
         `insert into company_supervisor(id,company_id,full_name,cpf_number,rg_number,issuing_authority,phone,whatsapp,position,created_at,updated_at)
       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,coalesce($10,now()),coalesce($11,now()))
@@ -563,6 +580,7 @@ const jobs: Job[] = [
         ],
       );
       await mapPut("company_supervisor", row.id, id);
+      return true;
     },
   },
 
@@ -574,7 +592,7 @@ const jobs: Job[] = [
     extractSql: () => `select * from representante_empresas`,
     upsert: async (row) => {
       const companyId = await mapGet("company", row.empresa_id);
-      if (!companyId) return;
+      if (!companyId) return false;
       const id = await resolveId("company_representative", row.id);
       await target.query(
         `insert into company_representative(id,company_id,full_name,cpf_number,rg_number,issuing_authority,phone,whatsapp,position,created_at,updated_at)
@@ -595,6 +613,7 @@ const jobs: Job[] = [
         ],
       );
       await mapPut("company_representative", row.id, id);
+      return true;
     },
   },
 
@@ -606,7 +625,7 @@ const jobs: Job[] = [
     extractSql: () => `select * from supervisor_instituicaos`,
     upsert: async (row) => {
       const institutionId = await mapGet("institutions", row.instituicao_id);
-      if (!institutionId) return;
+      if (!institutionId) return false;
       const id = await resolveId("institution_supervisor", row.id);
       await target.query(
         `insert into institution_supervisor(id,institution_id,full_name,cpf_number,rg_number,issuing_authority,phone,whatsapp,position,created_at,updated_at)
@@ -627,6 +646,7 @@ const jobs: Job[] = [
         ],
       );
       await mapPut("institution_supervisor", row.id, id);
+      return true;
     },
   },
 
@@ -638,7 +658,7 @@ const jobs: Job[] = [
     extractSql: () => `select * from representante_instituicaos`,
     upsert: async (row) => {
       const institutionId = await mapGet("institutions", row.instituicao_id);
-      if (!institutionId) return;
+      if (!institutionId) return false;
       const id = await resolveId("institution_representative", row.id);
       await target.query(
         `insert into institution_representative(id,institution_id,full_name,cpf_number,rg_number,issuing_authority,phone,whatsapp,position,created_at,updated_at)
@@ -659,6 +679,7 @@ const jobs: Job[] = [
         ],
       );
       await mapPut("institution_representative", row.id, id);
+      return true;
     },
   },
 
@@ -669,7 +690,10 @@ const jobs: Job[] = [
     pk: "co_seq_termo",
     extractSql: () => `select * from tb_termo`,
     upsert: async (row) => {
-      const id = await resolveId("internship_commitment_term", row.id ?? row.co_seq_termo);
+      const id = await resolveId(
+        "internship_commitment_term",
+        row.id ?? row.co_seq_termo,
+      );
       const companyId = await mapGet("company", row.empresa_id);
       const companySupervisorId = await mapGet(
         "company_supervisor",
@@ -698,7 +722,7 @@ const jobs: Job[] = [
         !institutionRepresentativeId ||
         !studentId
       )
-        return;
+        return false;
       const publicNumber = String(row.co_seq_termo ?? "")
         .padStart(6, "0")
         .slice(-6);
@@ -744,6 +768,7 @@ const jobs: Job[] = [
         row.id ?? row.co_seq_termo,
         id,
       );
+      return true;
     },
   },
 
@@ -758,7 +783,7 @@ const jobs: Job[] = [
       const termId = await mapGet("internship_commitment_term", row.id);
       const companyId = await mapGet("company", row.empresaId);
       const studentId = await mapGet("student", row.estudanteId);
-      if (!termId || !companyId || !studentId) return;
+      if (!termId || !companyId || !studentId) return false;
       await target.query(
         `insert into signed_internship_commitment_term(id,public_id,internship_commitment_term_id,company_id,student_id,pdf_url,created_at,updated_at)
       values ($1,$2,$3,$4,$5,$6,coalesce($7,now()),coalesce($8,now()))
@@ -775,6 +800,7 @@ const jobs: Job[] = [
         ],
       );
       await mapPut("signed_internship_commitment_term", row.id, id);
+      return true;
     },
   },
 ];
@@ -784,21 +810,23 @@ async function runJob(job: Job, ctx: Ctx) {
   const runId = await startRun(job.key);
   try {
     const [rows] = await source.query(job.extractSql(ctx.mode));
-    let count = 0;
+    let lidos = 0;
+    let inseridos = 0;
     for (const row of rows as any[]) {
       try {
-        await job.upsert(row, ctx);
+        const ok = await job.upsert(row, ctx);
+        if (ok) inseridos++;
       } catch (e: any) {
         await target.query(
           `insert into migration_errors(run_id,job_name,legacy_id,stage,error_message,payload) values ($1,$2,$3,'load',$4,$5)`,
           [runId, job.key, String(row[job.pk] ?? ""), e.message, row],
         );
       }
-      count++;
-      if (count % batchSize === 0) console.log(`[${job.key}] ${count} rows`);
+      lidos++;
+      if (lidos % batchSize === 0) console.log(`[${job.key}] ${lidos} rows`);
     }
     await endRun(runId, "success");
-    console.log(`✅ ${job.key}: ${count} lidos`);
+    console.log(`✅ ${job.key}: ${lidos} lidos / ${inseridos} inseridos`);
   } catch (e: any) {
     await endRun(runId, "failed", e.message);
     console.error(`❌ ${job.key}:`, e.message);
