@@ -2,13 +2,15 @@
 
 Este pacote define a base para migração **idempotente**, incremental e retomável.
 
-## EasyPanel + Nixpacks
+## EasyPanel
 
 Para rodar no EasyPanel sem deixar o PC ligado:
 
+> **Se Railpack falhar com erro de `mise`:** use **Docker** como método de build no EasyPanel (em vez de Nixpacks/Railpack). O `Dockerfile` incluído evita esse problema.
+
 1. **Crie um novo App** no EasyPanel
 2. **Conecte o repositório** (Git) ou faça deploy do código
-3. **Buildpack:** Nixpacks (padrão)
+3. **Build:** escolha **Docker** (recomendado) ou Nixpacks
 4. **Variáveis de ambiente** (obrigatórias):
    - `SOURCE_MYSQL_URL` — URL do MySQL/MariaDB origem
    - `TARGET_POSTGRES_URL` — URL do Postgres destino
