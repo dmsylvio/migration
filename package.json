@@ -1,0 +1,28 @@
+{
+   "name": "brasilia-migration",
+   "private": true,
+   "type": "module",
+   "packageManager": "pnpm@9.15.0",
+   "engines": {
+      "node": ">=22"
+   },
+   "scripts": {
+      "start": "tsx src/index.ts",
+      "migrate:full": "tsx src/index.ts --mode=full",
+      "migrate:inc": "tsx src/index.ts --mode=incremental",
+      "migrate:table": "tsx src/index.ts --mode=incremental --table",
+      "lint": "echo 'no lint configured'"
+   },
+   "dependencies": {
+      "dotenv": "^17.2.3",
+      "mysql2": "^3.15.2",
+      "pg": "^8.16.3",
+      "uuidv7": "^1.1.0"
+   },
+   "devDependencies": {
+      "@types/node": "^25.3.0",
+      "@types/pg": "^8.16.0",
+      "tsx": "^4.21.0",
+      "typescript": "^5.9.3"
+   }
+}

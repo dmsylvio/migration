@@ -1,0 +1,176 @@
+# Tabelas principais que alimentam as demais (baseadas no grafo de FKs do novo.sql)
+# old_table: origem (antigo.sql / MariaDB)
+# new_table: destino (novo.sql / Postgres)
+# mode:
+#   - full_then_incremental: carga completa inicial e depois deltas
+# incremental_by: coluna recomendada para delta
+# dependency_level: ordem de execução
+
+jobs:
+  # L1 - Dimensões / Base
+  - key: state
+    old_table: tb_estados
+    new_table: state
+    dependency_level: 1
+    mode: full_then_incremental
+    pk_old: co_seq_estado
+    pk_new: id
+    incremental_by: updated_at
+
+  - key: gender
+    old_table: tb_sexo
+    new_table: gender
+    dependency_level: 1
+    mode: full_then_incremental
+    pk_old: co_seq_sexo
+    pk_new: id
+    incremental_by: updated_at
+
+  - key: civil_status
+    old_table: tb_estado_civil
+    new_table: civil_status
+    dependency_level: 1
+    mode: full_then_incremental
+    pk_old: co_seq_estado_civil
+    pk_new: id
+    incremental_by: updated_at
+
+  - key: education_level
+    old_table: tb_escolaridade
+    new_table: education_level
+    dependency_level: 1
+    mode: full_then_incremental
+    pk_old: co_seq_escolaridade
+    pk_new: id
+    incremental_by: updated_at
+
+  - key: course
+    old_table: tb_confcurso
+    new_table: course
+    dependency_level: 1
+    mode: full_then_incremental
+    pk_old: co_seq_confcurso
+    pk_new: id
+    incremental_by: updated_at
+    notes: "Se necessário complementar com tb_cursoinfnew, criar job de merge/normalização."
+
+  - key: educational_institution
+    old_table: tb_confinstituicao
+    new_table: educational_institution
+    dependency_level: 1
+    mode: full_then_incremental
+    pk_old: co_seq_confinstituicao
+    pk_new: id
+    incremental_by: updated_at
+
+  - key: semester
+    old_table: tb_semestre
+    new_table: semester
+    dependency_level: 1
+    mode: full_then_incremental
+    pk_old: co_seq_semestre
+    pk_new: id
+    incremental_by: updated_at
+
+  - key: shift
+    old_table: tb_turno
+    new_table: shift
+    dependency_level: 1
+    mode: full_then_incremental
+    pk_old: co_seq_turno
+    pk_new: id
+    incremental_by: updated_at
+
+  - key: user
+    old_table: tb_usuario
+    new_table: user
+    dependency_level: 1
+    mode: full_then_incremental
+    pk_old: id
+    pk_new: id
+    incremental_by: updated_at
+
+  # L2 - Entidades mestres
+  - key: company
+    old_table: tb_empresa
+    new_table: company
+    dependency_level: 2
+    mode: full_then_incremental
+    pk_old: id
+    pk_new: id
+    incremental_by: updated_at
+
+  - key: institutions
+    old_table: tb_instituicao
+    new_table: institutions
+    dependency_level: 2
+    mode: full_then_incremental
+    pk_old: id
+    pk_new: id
+    incremental_by: updated_at
+
+  - key: student
+    old_table: tb_estudante
+    new_table: student
+    dependency_level: 2
+    mode: full_then_incremental
+    pk_old: id
+    pk_new: id
+    incremental_by: updated_at
+
+  # L3 - Vinculadas às mestres
+  - key: company_supervisor
+    old_table: supervisor_empresas
+    new_table: company_supervisor
+    dependency_level: 3
+    mode: full_then_incremental
+    pk_old: id
+    pk_new: id
+    incremental_by: updated_at
+
+  - key: company_representative
+    old_table: representante_empresas
+    new_table: company_representative
+    dependency_level: 3
+    mode: full_then_incremental
+    pk_old: id
+    pk_new: id
+    incremental_by: updated_at
+
+  - key: institution_supervisor
+    old_table: supervisor_instituicaos
+    new_table: institution_supervisor
+    dependency_level: 3
+    mode: full_then_incremental
+    pk_old: id
+    pk_new: id
+    incremental_by: updated_at
+
+  - key: institution_representative
+    old_table: representante_instituicaos
+    new_table: institution_representative
+    dependency_level: 3
+    mode: full_then_incremental
+    pk_old: id
+    pk_new: id
+    incremental_by: updated_at
+
+  # L4 - Transacional central
+  - key: internship_commitment_term
+    old_table: tb_termo
+    new_table: internship_commitment_term
+    dependency_level: 4
+    mode: full_then_incremental
+    pk_old: id
+    pk_new: id
+    incremental_by: updated_at
+
+  # L5 - Artefatos derivados
+  - key: signed_internship_commitment_term
+    old_table: termos
+    new_table: signed_internship_commitment_term
+    dependency_level: 5
+    mode: full_then_incremental
+    pk_old: id
+    pk_new: id
+    incremental_by: updated_at

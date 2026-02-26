@@ -1,0 +1,6 @@
+# Nixpacks config para EasyPanel
+# Migration roda e encerra (não é servidor)
+# Node 22 via .nvmrc ou engines.node no package.json
+
+[start]
+cmd = "pnpm run start"
