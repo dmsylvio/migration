@@ -61,6 +61,47 @@ function normalizePhone(phone?: string | null) {
   return String(phone).replace(/\s+/g, "").trim();
 }
 
+function normalizePhoneOrDefault(phone?: string | null, fallback = "0000000000") {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return fallback;
+  return normalized;
+}
+
+function mapPaymentFrequency(value?: string | null) {
+  const v = (value ?? "").toString().trim().toLowerCase();
+  if (!v) return null;
+  const map: Record<string, string> = {
+    mensalmente: "monthly",
+    mensal: "monthly",
+    semanalmente: "weekly",
+    semanal: "weekly",
+    hora: "hourly",
+    hourly: "hourly",
+    daily: "daily",
+    weekly: "weekly",
+    biweekly: "biweekly",
+    monthly: "monthly",
+  };
+  return map[v] ?? null;
+}
+
+function toStringArray(value?: unknown): string[] | null {
+  if (value == null) return null;
+  if (Array.isArray(value)) {
+    const cleaned = value
+      .map((v) => sanitizeOptionalString(String(v)))
+      .filter((v): v is string => !!v);
+    return cleaned.length ? cleaned : null;
+  }
+  const raw = sanitizeOptionalString(String(value));
+  if (!raw) return null;
+  const parts = raw
+    .split(/,|;/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return parts.length ? parts : [raw];
+}
+
 function mapLanguageLevel(value?: string | null) {
   const v = (value ?? "").toString().trim().toLowerCase();
   if (!v) return null;
@@ -107,6 +148,13 @@ async function getGenderIdFromLegacy(value: any) {
 
 async function getDefaultGenderId() {
   const res = await target.query(`SELECT id FROM gender ORDER BY name LIMIT 1`);
+  return res.rows?.[0]?.id ?? null;
+}
+
+async function getDefaultSemesterId() {
+  const res = await target.query(
+    `SELECT id FROM semester ORDER BY name NULLS LAST LIMIT 1`,
+  );
   return res.rows?.[0]?.id ?? null;
 }
 
@@ -362,7 +410,7 @@ const jobs: Job[] = [
           sanitizeOptionalString(row.ds_cidade),
           stateId,
           normalizeZip(row.nu_cep),
-          sanitizeRequiredString(normalizePhone(row.nu_telefone)) || null,
+          normalizePhoneOrDefault(row.nu_telefone),
           sanitizeOptionalString(normalizePhone(row.nu_fax)),
           row.created_at,
           row.updated_at,
@@ -401,7 +449,7 @@ const jobs: Job[] = [
           sanitizeOptionalString(row.ds_cidade),
           stateId,
           normalizeZip(row.nu_cep),
-          sanitizeRequiredString(normalizePhone(row.nu_telefone)) || null,
+          normalizePhoneOrDefault(row.nu_telefone),
           sanitizeOptionalString(normalizePhone(row.nu_fax)),
           row.created_at,
           row.updated_at,
@@ -433,7 +481,10 @@ const jobs: Job[] = [
         "educational_institution",
         row.instituicao_id,
       );
-      const semesterId = await mapGet("semester", row.semestre_id);
+      let semesterId = await mapGet("semester", row.semestre_id);
+      if (!semesterId) {
+        semesterId = await getDefaultSemesterId();
+      }
       const shiftId = await mapGet("shift", row.turno_id);
       await target.query(
         `insert into student(id,user_id,notes,full_name,birth_date,cpf_number,rg_number,issue_agency,has_driver_license,gender_id,civil_status_id,has_disability,disability_type,father_name,mother_name,address,city,state_id,zip_code,phone,whatsapp,education_level_id,course_id,educational_institution_id,has_oab_license,enrollment,semester_id,shift_id,available_shift_id,english_level,spanish_level,french_level,other_languages,improvement_courses,it_courses,created_at,updated_at)
@@ -472,9 +523,9 @@ const jobs: Job[] = [
           mapLanguageLevel(row.ingles),
           mapLanguageLevel(row.espanhol),
           mapLanguageLevel(row.frances),
-          sanitizeOptionalString(row.outro_idioma),
-          sanitizeOptionalString(row.ImprovementCourse),
-          sanitizeOptionalString(row.ITCourse),
+          toStringArray(row.outro_idioma),
+          toStringArray(row.ImprovementCourse),
+          toStringArray(row.ITCourse),
           row.createdAt,
           row.updatedAt,
         ],
@@ -677,7 +728,7 @@ const jobs: Job[] = [
           row.data_fim,
           row.hora_especial,
           row.valor_estagio,
-          row.taxa_pagamento,
+          mapPaymentFrequency(row.taxa_pagamento),
           row.vale_transporte,
           row.data,
           row.prorrogacao1,
