@@ -814,36 +814,29 @@ const jobs: Job[] = [
   {
     key: "signed_internship_commitment_term",
     level: 5,
-    sourceTable: "termos",
+    sourceTable: "tce_docs",
     pk: "id",
-    extractSql: () => `select * from termos`,
+    extractSql: () => `select * from tce_docs`,
     upsert: async (row) => {
       const id = await resolveId("signed_internship_commitment_term", row.id);
-      const termId = await mapGetAny(
-        "internship_commitment_term",
-        row.id,
-        row.termoId,
-      );
-      const companyId = await mapGetAny(
-        "company",
-        row.empresaId,
-        row.empresa_id,
-      );
-      const studentId = await mapGet("student", row.estudanteId);
+      const termId = await mapGet("internship_commitment_term", row.tce_id);
+      const companyId = await mapGet("company", row.empresa_id);
+      const studentId = await mapGet("student", row.estudante_id);
       if (!termId || !companyId || !studentId) return false;
+      const pdfUrl = sanitizeRequiredString(row.documento) || "";
       await target.query(
         `insert into signed_internship_commitment_term(id,public_id,internship_commitment_term_id,company_id,student_id,pdf_url,created_at,updated_at)
       values ($1,$2,$3,$4,$5,$6,coalesce($7,now()),coalesce($8,now()))
-      on conflict (id) do update set internship_commitment_term_id=excluded.internship_commitment_term_id,updated_at=now()`,
+      on conflict (id) do update set internship_commitment_term_id=excluded.internship_commitment_term_id,pdf_url=excluded.pdf_url,updated_at=now()`,
         [
           id,
           id,
           termId,
           companyId,
           studentId,
-          null,
-          row.createdAt,
-          row.updatedAt,
+          pdfUrl,
+          row.created_at ?? null,
+          row.updated_at ?? null,
         ],
       );
       await mapPut("signed_internship_commitment_term", row.id, id);
