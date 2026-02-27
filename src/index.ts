@@ -258,12 +258,17 @@ async function resolveId(
   return existing ?? newId();
 }
 
+// --- Legacy key helpers (INT + UUID coexistence) ---
 function normalizeLegacyId(v: unknown): string | null {
   if (v === null || v === undefined) return null;
   const s = String(v).trim();
   return s === "" ? null : s;
 }
 
+/**
+ * Stores BOTH legacy identifiers (e.g. INT co_seq_* and UUID char(36))
+ * pointing to the same new_id.
+ */
 async function mapPutBoth(
   entity: string,
   legacyInt: unknown,
@@ -272,11 +277,11 @@ async function mapPutBoth(
 ) {
   const a = normalizeLegacyId(legacyInt);
   const b = normalizeLegacyId(legacyUuid);
-
   if (a) await mapPut(entity, a, newId);
   if (b && b !== a) await mapPut(entity, b, newId);
 }
 
+/** Try multiple legacy candidates until one resolves in migration_map. */
 async function mapGetAny(entity: string, ...candidates: unknown[]) {
   for (const c of candidates) {
     const v = normalizeLegacyId(c);
@@ -416,7 +421,7 @@ const jobs: Job[] = [
           row.updated_at ?? null,
         ],
       );
-      // await mapPut("user", row.co_seq_usuario, id);
+      // Map both numeric PK and legacy UUID (tb_usuario.id is char(36))
       await mapPutBoth("user", row.co_seq_usuario, row.id, id);
       return true;
     },
@@ -429,7 +434,7 @@ const jobs: Job[] = [
     pk: "co_seq_empresa",
     extractSql: () => `select * from tb_empresa`,
     upsert: async (row, ctx) => {
-      // const id = await resolveId("company", row.id ?? row.co_seq_empresa);
+      // Canonical legacy key = co_seq_empresa (INT). Also map UUID tb_empresa.id if present.
       const id = await resolveId("company", row.co_seq_empresa);
       const userId = await mapGet("user", row.user_id);
       const stateId =
@@ -458,7 +463,6 @@ const jobs: Job[] = [
           row.updated_at,
         ],
       );
-      // await mapPut("company", row.id ?? row.co_seq_empresa, id);
       await mapPutBoth("company", row.co_seq_empresa, row.id, id);
       return true;
     },
@@ -471,10 +475,7 @@ const jobs: Job[] = [
     pk: "co_seq_instituicao",
     extractSql: () => `select * from tb_instituicao`,
     upsert: async (row, ctx) => {
-      // const id = await resolveId(
-      //   "institutions",
-      //   row.id ?? row.co_seq_instituicao,
-      // );
+      // Canonical legacy key = co_seq_instituicao (INT). Also map UUID tb_instituicao.id if present.
       const id = await resolveId("institutions", row.co_seq_instituicao);
       const userId = await mapGet("user", row.user_id);
       const stateId =
@@ -503,7 +504,6 @@ const jobs: Job[] = [
           row.updated_at,
         ],
       );
-      // await mapPut("institutions", row.id ?? row.co_seq_instituicao, id);
       await mapPutBoth("institutions", row.co_seq_instituicao, row.id, id);
       return true;
     },
@@ -724,14 +724,14 @@ const jobs: Job[] = [
     pk: "co_seq_termo",
     extractSql: () => `select * from tb_termo`,
     upsert: async (row) => {
-      // const id = await resolveId(
-      //   "internship_commitment_term",
-      //   row.id ?? row.co_seq_termo,
-      // );
+      // Canonical legacy key = co_seq_termo (INT). Also map UUID tb_termo.id if present.
       const id = await resolveId(
         "internship_commitment_term",
         row.co_seq_termo,
       );
+
+      // In legacy, tb_termo.empresa_id / instituicao_id are UUID (char(36))
+      // while other tables may reference company/institution by INT. We map BOTH.
       const companyId = await mapGetAny("company", row.empresa_id);
       const companySupervisorId = await mapGet(
         "company_supervisor",
@@ -819,8 +819,16 @@ const jobs: Job[] = [
     extractSql: () => `select * from termos`,
     upsert: async (row) => {
       const id = await resolveId("signed_internship_commitment_term", row.id);
-      const termId = await mapGet("internship_commitment_term", row.id);
-      const companyId = await mapGet("company", row.empresaId);
+      const termId = await mapGetAny(
+        "internship_commitment_term",
+        row.id,
+        row.termoId,
+      );
+      const companyId = await mapGetAny(
+        "company",
+        row.empresaId,
+        row.empresa_id,
+      );
       const studentId = await mapGet("student", row.estudanteId);
       if (!termId || !companyId || !studentId) return false;
       await target.query(
@@ -854,20 +862,21 @@ async function runJob(job: Job, ctx: Ctx) {
     for (const row of rows as any[]) {
       try {
         const ok = await job.upsert(row, ctx);
-        if (!ok) {
+        if (ok) {
+          inseridos++;
+        } else {
+          // IMPORTANT: do not silently drop rows (usually missing FK due to legacy INT/UUID mismatch)
           await target.query(
             `insert into migration_errors(run_id,job_name,legacy_id,stage,error_message,payload)
-            values ($1,$2,$3,'validate',$4,$5)`,
+             values ($1,$2,$3,'validate',$4,$5)`,
             [
               runId,
               job.key,
               String(row[job.pk] ?? ""),
-              "skipped: returned false (FK missing / map not found)",
+              "skipped: upsert returned false (missing FK or mapping)",
               row,
             ],
           );
-        } else {
-          inseridos++;
         }
       } catch (e: any) {
         await target.query(
