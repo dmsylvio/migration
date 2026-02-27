@@ -258,6 +258,35 @@ async function resolveId(
   return existing ?? newId();
 }
 
+function normalizeLegacyId(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  return s === "" ? null : s;
+}
+
+async function mapPutBoth(
+  entity: string,
+  legacyInt: unknown,
+  legacyUuid: unknown,
+  newId: string,
+) {
+  const a = normalizeLegacyId(legacyInt);
+  const b = normalizeLegacyId(legacyUuid);
+
+  if (a) await mapPut(entity, a, newId);
+  if (b && b !== a) await mapPut(entity, b, newId);
+}
+
+async function mapGetAny(entity: string, ...candidates: unknown[]) {
+  for (const c of candidates) {
+    const v = normalizeLegacyId(c);
+    if (!v) continue;
+    const id = await mapGet(entity, v);
+    if (id) return id;
+  }
+  return null;
+}
+
 async function bootstrapStates() {
   const m = new Map<string, string>();
   const r = await target.query(`select id, acronym from state`);
@@ -387,7 +416,8 @@ const jobs: Job[] = [
           row.updated_at ?? null,
         ],
       );
-      await mapPut("user", row.co_seq_usuario, id);
+      // await mapPut("user", row.co_seq_usuario, id);
+      await mapPutBoth("user", row.co_seq_usuario, row.id, id);
       return true;
     },
   },
@@ -399,7 +429,8 @@ const jobs: Job[] = [
     pk: "co_seq_empresa",
     extractSql: () => `select * from tb_empresa`,
     upsert: async (row, ctx) => {
-      const id = await resolveId("company", row.id ?? row.co_seq_empresa);
+      // const id = await resolveId("company", row.id ?? row.co_seq_empresa);
+      const id = await resolveId("company", row.co_seq_empresa);
       const userId = await mapGet("user", row.user_id);
       const stateId =
         ctx.stateByUf.get(String(row.ds_uf || "").toUpperCase()) ?? null;
@@ -427,7 +458,8 @@ const jobs: Job[] = [
           row.updated_at,
         ],
       );
-      await mapPut("company", row.id ?? row.co_seq_empresa, id);
+      // await mapPut("company", row.id ?? row.co_seq_empresa, id);
+      await mapPutBoth("company", row.co_seq_empresa, row.id, id);
       return true;
     },
   },
@@ -439,10 +471,11 @@ const jobs: Job[] = [
     pk: "co_seq_instituicao",
     extractSql: () => `select * from tb_instituicao`,
     upsert: async (row, ctx) => {
-      const id = await resolveId(
-        "institutions",
-        row.id ?? row.co_seq_instituicao,
-      );
+      // const id = await resolveId(
+      //   "institutions",
+      //   row.id ?? row.co_seq_instituicao,
+      // );
+      const id = await resolveId("institutions", row.co_seq_instituicao);
       const userId = await mapGet("user", row.user_id);
       const stateId =
         ctx.stateByUf.get(String(row.ds_uf || "").toUpperCase()) ?? null;
@@ -470,7 +503,8 @@ const jobs: Job[] = [
           row.updated_at,
         ],
       );
-      await mapPut("institutions", row.id ?? row.co_seq_instituicao, id);
+      // await mapPut("institutions", row.id ?? row.co_seq_instituicao, id);
+      await mapPutBoth("institutions", row.co_seq_instituicao, row.id, id);
       return true;
     },
   },
@@ -690,11 +724,15 @@ const jobs: Job[] = [
     pk: "co_seq_termo",
     extractSql: () => `select * from tb_termo`,
     upsert: async (row) => {
+      // const id = await resolveId(
+      //   "internship_commitment_term",
+      //   row.id ?? row.co_seq_termo,
+      // );
       const id = await resolveId(
         "internship_commitment_term",
-        row.id ?? row.co_seq_termo,
+        row.co_seq_termo,
       );
-      const companyId = await mapGet("company", row.empresa_id);
+      const companyId = await mapGetAny("company", row.empresa_id);
       const companySupervisorId = await mapGet(
         "company_supervisor",
         row.supervisor_empresa_id,
@@ -703,7 +741,7 @@ const jobs: Job[] = [
         "company_representative",
         row.representante_empresa_id,
       );
-      const institutionId = await mapGet("institutions", row.instituicao_id);
+      const institutionId = await mapGetAny("institutions", row.instituicao_id);
       const institutionSupervisorId = await mapGet(
         "institution_supervisor",
         row.supervisor_instituicao_id,
@@ -763,9 +801,10 @@ const jobs: Job[] = [
           row.updated_at,
         ],
       );
-      await mapPut(
+      await mapPutBoth(
         "internship_commitment_term",
-        row.id ?? row.co_seq_termo,
+        row.co_seq_termo,
+        row.id,
         id,
       );
       return true;
@@ -815,7 +854,21 @@ async function runJob(job: Job, ctx: Ctx) {
     for (const row of rows as any[]) {
       try {
         const ok = await job.upsert(row, ctx);
-        if (ok) inseridos++;
+        if (!ok) {
+          await target.query(
+            `insert into migration_errors(run_id,job_name,legacy_id,stage,error_message,payload)
+            values ($1,$2,$3,'validate',$4,$5)`,
+            [
+              runId,
+              job.key,
+              String(row[job.pk] ?? ""),
+              "skipped: returned false (FK missing / map not found)",
+              row,
+            ],
+          );
+        } else {
+          inseridos++;
+        }
       } catch (e: any) {
         await target.query(
           `insert into migration_errors(run_id,job_name,legacy_id,stage,error_message,payload) values ($1,$2,$3,'load',$4,$5)`,
